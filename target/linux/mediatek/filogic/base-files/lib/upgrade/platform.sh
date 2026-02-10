@@ -124,6 +124,7 @@ platform_do_upgrade() {
 	airpi,ap3000m|\
 	*Airpi*|\
 	cmcc,rax3000m-emmc|\
+	cmcc,xr30-emmc|\
 	philips,hy3000|\
 	sl,3000-emmc|\
 	smartrg,sdg-8612|\

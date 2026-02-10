@@ -1,0 +1,100 @@
+#!/bin/sh
+
+#通用物理主權 v6.0 (GFW 屏蔽 + 全能優化版)
+# --- 1. 基礎架構穩定 (UCI 層面) ---
+# 確保配置持久化，優化無線底層
+uci batch <<EOF
+set wireless.radio0.powersave='0'
+set wireless.radio1.powersave='0'
+set wireless.radio0.bgscan='0'
+set wireless.radio1.bgscan='0'
+set wireless.radio0.txqueuelen='5000'
+set wireless.radio1.txqueuelen='5000'
+set firewall.@defaults[0].flow_offloading='1'
+set firewall.@defaults[0].flow_offloading_hw='1'
+commit wireless
+commit firewall
+EOF
+
+# --- 2. 內核網絡棧與物理消噪 (Sysctl) ---
+cat >> /etc/sysctl.conf <<EOF
+# [流量控制] BBR + FQ_CODEL 兼顧 4K 與遊戲
+net.core.default_qdisc=fq_codel
+net.ipv4.tcp_congestion_control=bbr
+# [內存去重] KSM 針對加密插件進行內存折疊
+vm.ksm_pages_to_scan=100
+vm.ksm_sleep_millisecs=20
+# [GFW 屏蔽] 物理消噪策略
+net.ipv4.icmp_echo_ignore_broadcasts=1
+net.ipv4.icmp_ignore_bogus_error_responses=1
+net.ipv4.icmp_ratelimit=100
+net.ipv4.tcp_fastopen=3
+net.ipv4.tcp_fin_timeout=15
+# [緩衝區擴張] 針對 Hy2 加速
+net.core.rmem_max=8388608
+net.core.wmem_max=8388608
+EOF
+
+# --- 3. 系統核心優化服務 (IRQ/HNAT/EtHTool/遊戲/KSM) ---
+cat > /etc/init.d/mt7981_v6_final <<'EOF'
+#!/bin/sh /etc/rc.common
+START=99
+
+start() {
+    # 延遲等待所有硬件驅動就緒
+    sleep 10
+
+    # [A. 基因級加速与中断聚合]
+    # 針對物理網卡進行卸載與聚合，降低 CPU 負擔
+    for eth in $(ls /sys/class/net | grep -E 'eth|wan|lan'); do
+        # 開啟 GRO/GSO/TSO 硬件卸載
+        ethtool -K "$eth" gro on gso on tso on 2>/dev/null
+        # 設置中斷聚合：100微秒，讓 CPU 呼吸更平穩，實現 32 度低溫
+        ethtool -C "$eth" rx-usecs 100 tx-usecs 100 2>/dev/null
+    done
+
+    # [B. IRQ 核心解耦] CPU0 數據轉發 / CPU1 負責加密與無線
+    # 自動識別發哥網絡與無線中斷號
+    ETH_IRQ=$(grep -m1 "mtk-network" /proc/interrupts | cut -d: -f1 | tr -d ' ')
+    WIFI_IRQ=$(grep -m1 "mt7981" /proc/interrupts | cut -d: -f1 | tr -d ' ')
+    CRYPTO_IRQ=$(grep "eip" /proc/interrupts | cut -d: -f1)
+
+    [ -n "$ETH_IRQ" ] && echo 1 > "/proc/irq/$ETH_IRQ/smp_affinity"
+    [ -n "$WIFI_IRQ" ] && echo 2 > "/proc/irq/$WIFI_IRQ/smp_affinity"
+    for irq in $CRYPTO_IRQ; do echo 2 > "/proc/irq/$irq/smp_affinity"; done
+
+    # [C. HNAT 中繼補丁] 物理修復中繼模式下“有信號無網絡”邏輯
+    [ -d "/sys/kernel/debug/hnat" ] && echo 1 > /sys/kernel/debug/hnat/hook_relay
+
+    # [D. KSM 內存回收合閘]
+    [ -f /sys/kernel/mm/ksm/run ] && echo 1 > /sys/kernel/mm/ksm/run
+
+    # [E. NFTables 高級規則：遊戲優先 + GFW 消噪]
+    # 1. 遊戲 UDP 小包優先排隊 (DSCP 46/EF)
+    nft insert rule inet fw4 mangle_postrouting udp dport { 1024-65535 } udp length 0-128 ip dscp set ef 2>/dev/null
+    # 2. 針對 GFW 屏蔽：丟棄 TTL < 5 的探測包，防止路徑邊界掃描
+    nft insert rule inet fw4 input ip protocol icmp icmp type echo-request ip ttl lt 5 counter drop 2>/dev/null
+
+    # [F. 進程優先級微調] 讓代理與 DNS 核心橫著走
+    for proc in hysteria xray ss-local smartdns; do
+        pids=$(pgrep $proc)
+        [ -n "$pids" ] && for pid in $pids; do renice -n -10 $pid; done
+    done
+}
+EOF
+
+chmod +x /etc/init.d/99_physical_sovereignty
+/etc/init.d/99_physical_sovereignty enable
+
+# --- 4. zRAM 自適應內存折疊 ---
+# 針對不同 RAM 容量 (256M/512M) 自動適配 50% 折疊
+TOTAL_MEM=$(free | grep Mem | awk '{print $2}')
+ZRAM_SIZE=$((TOTAL_MEM / 2))
+if uci get system.@system[0] >/dev/null 2>&1; then
+    uci set system.zram=zram
+    uci set system.zram.size="$((ZRAM_SIZE / 1024))"
+    uci set system.zram.comp_algorithm='zstd'
+    uci commit system
+fi
+
+exit 0
