@@ -76,16 +76,43 @@ sysctl -p
 # 5. CPU 頻率定頻效能模式
 for i in /sys/devices/system/cpu/cpufreq/policy*; do echo performance > "$i/scaling_governor"; done
 
-# 6. zRAM 強制 zstd 重構 (內存物理增程)
+# 6. zRAM 強制 zstd 合闸
+# [关卡 1：物理主权加载 - 必须最先执行]
+modprobe zstd 2>/dev/null
+modprobe zram 2>/dev/null
+
+# [关卡 2：zRAM 強制 zstd 重構 - 內存物理增程]
+# ---------------------------------------------------------
 if [ -b /dev/zram0 ]; then
+    # 1. 先停掉旧的 Swap，清空逻辑
     swapoff /dev/zram0 2>/dev/null
     echo 1 > /sys/block/zram0/reset 2>/dev/null
-    echo zstd > /sys/block/zram0/comp_algorithm
+
+    # 2. 注入 ZSTD。如果失败（说明内核不支持），它会自动保留默认
+    echo zstd > /sys/block/zram0/comp_algorithm 2>/dev/null
+
+    # 3. 动态计算内存：设置为物理内存的 100% (ZSTD 压缩率高，不虚)
+    # TOTAL_MEM 是 KB，disksize 需要 Byte
     TOTAL_MEM=$(free | grep Mem | awk '{print $2}')
     echo $((TOTAL_MEM * 1024)) > /sys/block/zram0/disksize
+
+    # 4. 重新格式化并拉起，赋予高优先级
     mkswap /dev/zram0 >/dev/null
     swapon -p 10 /dev/zram0
+    logger "Sovereignty: zRAM has been weaponized with ZSTD."
 fi
+
+# [关卡 3：GRO 物理层暴力合闸 - 消除中断风暴]
+# ---------------------------------------------------------
+# 遍历所有物理网口，强制开启卸载加速
+for eth in eth0 eth1 eth2 eth3; do
+    if ethtool -i $eth >/dev/null 2>&1; then
+        ethtool -K $eth gro on 2>/dev/null
+        ethtool -K $eth gso on 2>/dev/null
+        ethtool -K $eth tso on 2>/dev/null
+        logger "Sovereignty: $eth GRO/GSO/TSO enforced."
+    fi
+done
 
 # 7. 加載硬件引擎與 PPE
 modprobe crypto_safexcel 2>/dev/null
