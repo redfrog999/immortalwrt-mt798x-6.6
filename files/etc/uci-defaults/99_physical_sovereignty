@@ -6,32 +6,39 @@ modprobe crypto_safexcel 2>/dev/null
 # 开启硬件流表加速（必须开启，这是 MTK 的秘籍）
 echo 1 > /proc/sys/net/netfilter/nf_flow_table_hw 2>/dev/null
 
-# 2. 核心非对称重构 (MT7981 1.65GHz 巅峰版)
-# ---------------------------------------------------------
-# 获取中断号（增加容错处理）
-ETH_IRQ=$(grep "eth0" /proc/interrupts | awk -F: '{print $1}' | tr -d ' ')
-WIFI_IRQ=$(grep "mt7981" /proc/interrupts | awk -F: '{print $1}' | tr -d ' ')
-CRYPTO_IRQ=$(grep -E "safexcel|eip" /proc/interrupts | awk -F: '{print $1}' | tr -d ' ')
+# [物理层 GRO 合闸]
+# 在网络接口完全拉起前，强制开启通用接收卸载
+# 这能合并小包，极大缓解 A53 处理软中断的上下文切换压力
+ethtool -K eth0 gro on 2>/dev/null
+ethtool -K eth1 gro on 2>/dev/null
 
-# [策略合闸] CPU0 专注 IO 搬运，CPU1 专注暴力计算
-# 有线中断 -> CPU0 (Mask 1)
-for irq in $ETH_IRQ; do echo 1 > "/proc/irq/$irq/smp_affinity"; done
-# 无线中断 -> CPU0 (让 WED 引擎在 0 号核处理调度)
-for irq in $WIFI_IRQ; do echo 1 > "/proc/irq/$irq/smp_affinity"; done
+# [主权锁定] 强制所有 CPU 核心进入巅峰性能模式，杜绝任何节能延迟
+for i in 0 1 2 3; do
+    [ -e "/sys/devices/system/cpu/cpu\$i/cpufreq/scaling_governor" ] && \
+    echo "performance" > "/sys/devices/system/cpu/cpu\$i/cpufreq/scaling_governor"
+done
 
-# 加密引擎驱动 -> 强行推给 CPU1 (Mask 2)
-# 让超频到 1.65GHz 的 CPU1 专门负责 kTLS、SS-ChaCha20 和 zstd
-for irq in $CRYPTO_IRQ; do echo 2 > "/proc/irq/$irq/smp_affinity"; done
+# [精准寻脉] 通过物理地址锁定硬件中断，不依赖固件标签
+ETH_IRQ=\$(grep "15100000.ethernet" /proc/interrupts | awk -F: '{print \$1}' | tr -d ' ' | head -n1)
+CRYPTO_IRQ=\$(grep "10320000.crypto" /proc/interrupts | awk -F: '{print \$1}' | tr -d ' ')
 
-# 3. RPS 逻辑纠偏：精准投递
-# ---------------------------------------------------------
-# 关键：不要设为 3！要把所有软中断处理全部指派给 CPU1 (Mask 2)
-# 这样数据包在 CPU0 接收后，立刻交给 CPU1 去解密/压缩，路径是单向的，不回头。
-for rps_file in /sys/class/net/*/queues/rx-*/rps_cpus; do echo 2 > "$rps_file"; done
+# [自适应均衡] 识别核心数并设定全核心打群架掩码 (3 为双核, f 为四核)
+CORE_COUNT=\$(grep -c "^processor" /proc/cpuinfo)
+[ "\$CORE_COUNT" -eq 4 ] && MASK="f" || MASK="3"
 
-# 增大流表数量，匹配你的特大号散热铜片带来的高吞吐
-echo 4096 > /proc/sys/net/core/rps_sock_flow_entries
-for rps_flow in /sys/class/net/*/queues/rx-*/rps_flow_cnt; do echo 2048 > "$rps_flow"; done
+# [中断主权绑定]
+[ -n "\$ETH_IRQ" ] && echo "\$MASK" > "/proc/irq/\$ETH_IRQ/smp_affinity"
+for irq in \$CRYPTO_IRQ; do
+    echo "\$MASK" > "/proc/irq/\$irq/smp_affinity"
+done
+
+# [RPS/XPS 泵送] 将协议栈算力全面散布至所有核心，杜绝单核瓶颈
+for x in /sys/class/net/*/queues/rx-*/rps_cpus; do echo "\$MASK" > "\$x"; done
+for x in /sys/class/net/*/queues/tx-*/xps_cpus; do echo "\$MASK" > "\$x"; done
+
+# [流量池扩容] 极大化流表预算，匹配 1.65G/2.2G 的高频吞吐
+echo "32768" > /proc/sys/net/core/rps_sock_flow_entries
+for x in /sys/class/net/*/queues/rx-*/rps_flow_cnt; do echo "4096" > "\$x"; done
 
 # 4. 开启内核 BBRv3 和缓存优化 (配合 6.6.95 内核)
 sysctl -w net.core.default_qdisc=fq
@@ -90,5 +97,19 @@ sysctl -w vm.min_free_kbytes=20480
 
 # 9. 強制執行定頻效能模式 (確保 1.6G+ 滿血運行)
 for i in /sys/devices/system/cpu/cpufreq/policy*; do echo performance > "$i/scaling_governor"; done
+
+# 10. 无线主权：解锁 AU 区域与最大发射功率]
+# 遍历所有无线电接口 (radio0, radio1)
+for radio in 0 1; do
+    # 锁定区域为澳大利亚 (AU)，释放物理限制
+    uci set wireless.radio${radio}.country='AU'
+    # 提升发射功率到极致
+    uci set wireless.radio${radio}.txpower='28'
+    # 开启物理层加速特性
+   uci set wireless.radio${radio}.beamformer='1'
+done
+uci commit wireless
+# 强制重启无线服务应用变更
+/sbin/wifi up
 
 exit 0
