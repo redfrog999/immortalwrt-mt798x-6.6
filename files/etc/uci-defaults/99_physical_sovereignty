@@ -1,32 +1,50 @@
 #!/bin/sh
-# --- MT7981 物理主權 v9.0 (四合一模式·全量對齊版) ---
+# --- MT7981 物理主權 v9.0 (六合一模式·全量對齊版) ---
 
 # 1. 唤醒硬件加速基因
 modprobe crypto_safexcel 2>/dev/null
 # 开启硬件流表加速（必须开启，这是 MTK 的秘籍）
 echo 1 > /proc/sys/net/netfilter/nf_flow_table_hw 2>/dev/null
 
-# [物理层 GRO 合闸]
-# 在网络接口完全拉起前，强制开启通用接收卸载
-# 这能合并小包，极大缓解 A53 处理软中断的上下文切换压力
-ethtool -K eth0 gro on 2>/dev/null
-ethtool -K eth1 gro on 2>/dev/null
+# 2. zRAM 強制 zstd 重構 (內存物理增程)
+if [ -b /dev/zram0 ]; then
+    swapoff /dev/zram0 2>/dev/null
+    echo 1 > /sys/block/zram0/reset 2>/dev/null
+    echo zstd > /sys/block/zram0/comp_algorithm
+    TOTAL_MEM=$(free | grep Mem | awk '{print $2}')
+    echo $((TOTAL_MEM * 1024)) > /sys/block/zram0/disksize
+    mkswap /dev/zram0 >/dev/null
+    swapon -p 10 /dev/zram0
+fi
 
-# [主权锁定] 强制所有 CPU 核心进入巅峰性能模式，杜绝任何节能延迟
+# 3. GRO 物理层 - 消除中断风暴]
+# ---------------------------------------------------------
+# 遍历所有物理网口，强制开启卸载加速
+for eth in eth0 eth1 eth2 eth3; do
+    if ethtool -i $eth >/dev/null 2>&1; then
+        ethtool -K $eth gro on 2>/dev/null
+        ethtool -K $eth gso on 2>/dev/null
+        ethtool -K $eth tso on 2>/dev/null
+        logger "Sovereignty: $eth GRO/GSO/TSO enforced."
+    fi
+done
+
+# 4.强制所有 CPU 核心进入巅峰性能模式，杜绝任何节能延迟
 for i in 0 1 2 3; do
     [ -e "/sys/devices/system/cpu/cpu\$i/cpufreq/scaling_governor" ] && \
     echo "performance" > "/sys/devices/system/cpu/cpu\$i/cpufreq/scaling_governor"
 done
 
-# [精准寻脉] 通过物理地址锁定硬件中断，不依赖固件标签
+# 5. 重构均衡版IRQ&RPS分配方案
+# 通过物理地址锁定硬件中断，不依赖固件标签
 ETH_IRQ=\$(grep "15100000.ethernet" /proc/interrupts | awk -F: '{print \$1}' | tr -d ' ' | head -n1)
 CRYPTO_IRQ=\$(grep "10320000.crypto" /proc/interrupts | awk -F: '{print \$1}' | tr -d ' ')
 
-# [自适应均衡] 识别核心数并设定全核心打群架掩码 (3 为双核, f 为四核)
+# 自适应均衡，识别核心数并设定全核心打群架掩码 (3 为双核, f 为四核)
 CORE_COUNT=\$(grep -c "^processor" /proc/cpuinfo)
 [ "\$CORE_COUNT" -eq 4 ] && MASK="f" || MASK="3"
 
-# [中断主权绑定]
+# 中断绑定
 [ -n "\$ETH_IRQ" ] && echo "\$MASK" > "/proc/irq/\$ETH_IRQ/smp_affinity"
 for irq in \$CRYPTO_IRQ; do
     echo "\$MASK" > "/proc/irq/\$irq/smp_affinity"
@@ -40,16 +58,16 @@ for x in /sys/class/net/*/queues/tx-*/xps_cpus; do echo "\$MASK" > "\$x"; done
 echo "32768" > /proc/sys/net/core/rps_sock_flow_entries
 for x in /sys/class/net/*/queues/rx-*/rps_flow_cnt; do echo "4096" > "\$x"; done
 
-# 4. 开启内核 BBRv3 和缓存优化 (配合 6.6.95 内核)
+# 6. 开启内核 BBRv3 和缓存优化 (配合 6.6.95 内核)
 sysctl -w net.core.default_qdisc=fq
 sysctl -w net.ipv4.tcp_congestion_control=bbr
 sysctl -w net.ipv4.tcp_fastopen=3
 
-# 5. 针对 fq 的进阶微调 (防止小包拥塞)
+# 7. 针对 fq 的进阶微调 (防止小包拥塞)
 # 允许每个流的最大速率不被过度限制，保持 4K 流的充沛动力
 sysctl -w net.ipv4.tcp_notsent_lowat=16384
 
-# 4. 系統級內核調優 (融合 B+C 模塊)
+# 8. 系統級內核調優 (融合 B+C 模塊)
 # ---------------------------------------------------------
 cat >> /etc/sysctl.conf <<EOF
 # A53 心跳優化：縮短調度週期
@@ -59,7 +77,7 @@ kernel.sched_wakeup_granularity_ns=1500000
 
 # 網絡吞吐與 BBR
 net.core.netdev_budget=1000
-net.core.netdev_budget_usecs=10000
+net.core.netdev_budget_usecs=3000
 
 # 內存管理 (防爆、防抖)
 vm.vfs_cache_pressure=40
@@ -73,70 +91,8 @@ net.ipv4.tcp_wmem=4096 65536 16777216
 EOF
 sysctl -p
 
-# 5. CPU 頻率定頻效能模式
-for i in /sys/devices/system/cpu/cpufreq/policy*; do echo performance > "$i/scaling_governor"; done
-
-# 6. zRAM 強制 zstd 合闸
-# [关卡 1：物理主权加载 - 必须最先执行]
-modprobe zstd 2>/dev/null
-modprobe zram 2>/dev/null
-
-# [关卡 2：zRAM 強制 zstd 重構 - 內存物理增程]
-# ---------------------------------------------------------
-if [ -b /dev/zram0 ]; then
-    # 1. 先停掉旧的 Swap，清空逻辑
-    swapoff /dev/zram0 2>/dev/null
-    echo 1 > /sys/block/zram0/reset 2>/dev/null
-
-    # 2. 注入 ZSTD。如果失败（说明内核不支持），它会自动保留默认
-    echo zstd > /sys/block/zram0/comp_algorithm 2>/dev/null
-
-    # 3. 动态计算内存：设置为物理内存的 100% (ZSTD 压缩率高，不虚)
-    # TOTAL_MEM 是 KB，disksize 需要 Byte
-    TOTAL_MEM=$(free | grep Mem | awk '{print $2}')
-    echo $((TOTAL_MEM * 1024)) > /sys/block/zram0/disksize
-
-    # 4. 重新格式化并拉起，赋予高优先级
-    mkswap /dev/zram0 >/dev/null
-    swapon -p 10 /dev/zram0
-    logger "Sovereignty: zRAM has been weaponized with ZSTD."
-fi
-
-# [关卡 3：GRO 物理层暴力合闸 - 消除中断风暴]
-# ---------------------------------------------------------
-# 遍历所有物理网口，强制开启卸载加速
-for eth in eth0 eth1 eth2 eth3; do
-    if ethtool -i $eth >/dev/null 2>&1; then
-        ethtool -K $eth gro on 2>/dev/null
-        ethtool -K $eth gso on 2>/dev/null
-        ethtool -K $eth tso on 2>/dev/null
-        logger "Sovereignty: $eth GRO/GSO/TSO enforced."
-    fi
-done
-
-# 7. 加載硬件引擎與 PPE
+# 9. 加載硬件引擎與 PPE
 modprobe crypto_safexcel 2>/dev/null
 echo 1 > /proc/sys/net/netfilter/nf_flow_table_hw 2>/dev/null
-
-# 8. 物理內存保護 (全局定值，消除機型衝突)
-# 統一設置為 20MB，確保超頻後 DMA 不斷流，這是最穩妥的底線
-sysctl -w vm.min_free_kbytes=20480
-
-# 9. 強制執行定頻效能模式 (確保 1.6G+ 滿血運行)
-for i in /sys/devices/system/cpu/cpufreq/policy*; do echo performance > "$i/scaling_governor"; done
-
-# 10. 无线主权：解锁 AU 区域与最大发射功率]
-# 遍历所有无线电接口 (radio0, radio1)
-for radio in 0 1; do
-    # 锁定区域为澳大利亚 (AU)，释放物理限制
-    uci set wireless.radio${radio}.country='AU'
-    # 提升发射功率到极致
-    uci set wireless.radio${radio}.txpower='28'
-    # 开启物理层加速特性
-   uci set wireless.radio${radio}.beamformer='1'
-done
-uci commit wireless
-# 强制重启无线服务应用变更
-/sbin/wifi up
 
 exit 0
