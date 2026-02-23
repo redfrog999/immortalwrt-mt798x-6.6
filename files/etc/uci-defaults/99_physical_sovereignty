@@ -83,10 +83,10 @@ kernel.sched_wakeup_granularity_ns=1500000
 
 # 網絡吞吐與 BBR
 net.core.netdev_budget=1000
-net.core.netdev_budget_usecs=3000
+net.core.netdev_budget_usecs=5000
 
 # 內存管理 (防爆、防抖)
-vm.vfs_cache_pressure=40
+vm.vfs_cache_pressure=100
 vm.min_free_kbytes=20480
 
 # TCP 窗口與緩衝區 (針對 4K 影音)
