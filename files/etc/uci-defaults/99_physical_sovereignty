@@ -19,73 +19,13 @@ if [ -b /dev/zram0 ]; then
     swapon -p 10 /dev/zram0
 fi
 
-# 6. zRAM 強制 zstd 合闸
-# [关卡 1：物理主权加载 - 必须最先执行]
-modprobe zstd 2>/dev/null
-modprobe zram 2>/dev/null
-
-# [关卡 2：zRAM 強制 zstd 重構 - 內存物理增程]
-# ---------------------------------------------------------
-if [ -b /dev/zram0 ]; then
-    # 1. 先停掉旧的 Swap，清空逻辑
-    swapoff /dev/zram0 2>/dev/null
-    echo 1 > /sys/block/zram0/reset 2>/dev/null
-
-    # 2. 注入 ZSTD。如果失败（说明内核不支持），它会自动保留默认
-    echo zstd > /sys/block/zram0/comp_algorithm 2>/dev/null
-
-    # 3. 动态计算内存：设置为物理内存的 100% (ZSTD 压缩率高，不虚)
-    # TOTAL_MEM 是 KB，disksize 需要 Byte
-    TOTAL_MEM=$(free | grep Mem | awk '{print $2}')
-    echo $((TOTAL_MEM * 1024)) > /sys/block/zram0/disksize
-
-    # 4. 重新格式化并拉起，赋予高优先级
-    mkswap /dev/zram0 >/dev/null
-    swapon -p 10 /dev/zram0
-    logger "Sovereignty: zRAM has been weaponized with ZSTD."
-fi
-
-# 8. 系統級內核調優 (修正版)
-# 清理可能存在的舊配置，避免衝突
-sed -i '/vm.swappiness/d' /etc/sysctl.conf
-sed -i '/vm.vfs_cache_pressure/d' /etc/sysctl.conf
-
-cat >> /etc/sysctl.conf <<EOF
-# 強制開啟“吃水”模式
-vm.swappiness=100
-# 強制回收文件緩存，將空間騰給 ZSTD
-vm.vfs_cache_pressure=200
-# 髒數據回寫優化，配合 20MB/s+ 的 eMMC 寫入
-vm.dirty_ratio=40
-vm.dirty_background_ratio=10
-EOF
-sysctl -p
-
-# 3：GRO全链路物理层暴力合闸 - 最终版
-# 遍历所有活跃的物理与无线网口，消除中断风暴
-# 覆盖范围：有线(eth), 无线中继(apclix), 无线发射(ra/rax)
-for dev in eth0 eth1 apclix0 ra0 rax0; do
-    if [ -d "/sys/class/net/$dev" ]; then
-        # 强制开启大包封装，减少 CPU 换页开销
-        ethtool -K $dev gro on 2>/dev/null
-        ethtool -K $dev gso on 2>/dev/null
-        ethtool -K $dev tso on 2>/dev/null
-        # 对移动端友好的传输加速
-        ethtool -K $dev ufo on 2>/dev/null
-        logger "Physical_Sovereignty: $dev High-Speed Logic Aligned"
-    fi
-done
-
-# 针对 Bridge 桥接接口的额外加固
-ethtool -K br-lan gro on 2>/dev/null
-
-# 4.强制所有 CPU 核心进入巅峰性能模式，杜绝任何节能延迟
+# 3.强制所有 CPU 核心进入巅峰性能模式，杜绝任何节能延迟
 for i in 0 1 2 3; do
     [ -e "/sys/devices/system/cpu/cpu\$i/cpufreq/scaling_governor" ] && \
     echo "performance" > "/sys/devices/system/cpu/cpu\$i/cpufreq/scaling_governor"
 done
 
-# 5. 重构均衡版IRQ&RPS分配方案
+# 4. 重构均衡版IRQ&RPS分配方案
 # 通过物理地址锁定硬件中断，不依赖固件标签
 ETH_IRQ=\$(grep "15100000.ethernet" /proc/interrupts | awk -F: '{print \$1}' | tr -d ' ' | head -n1)
 CRYPTO_IRQ=\$(grep "10320000.crypto" /proc/interrupts | awk -F: '{print \$1}' | tr -d ' ')
@@ -108,16 +48,16 @@ for x in /sys/class/net/*/queues/tx-*/xps_cpus; do echo "\$MASK" > "\$x"; done
 echo "32768" > /proc/sys/net/core/rps_sock_flow_entries
 for x in /sys/class/net/*/queues/rx-*/rps_flow_cnt; do echo "4096" > "\$x"; done
 
-# 6. 开启内核 BBRv3 和缓存优化 (配合 6.6.95 内核)
+# 5. 开启内核 BBRv3 和缓存优化 (配合 6.6.95 内核)
 sysctl -w net.core.default_qdisc=fq
 sysctl -w net.ipv4.tcp_congestion_control=bbr
 sysctl -w net.ipv4.tcp_fastopen=3
 
-# 7. 针对 fq 的进阶微调 (防止小包拥塞)
+# 6. 针对 fq 的进阶微调 (防止小包拥塞)
 # 允许每个流的最大速率不被过度限制，保持 4K 流的充沛动力
 sysctl -w net.ipv4.tcp_notsent_lowat=16384
 
-# 8. 系統級內核調優 (融合 B+C 模塊)
+# 7. 系統級內核調優 (融合 B+C 模塊)
 # ---------------------------------------------------------
 cat >> /etc/sysctl.conf <<EOF
 # A53 心跳優化：縮短調度週期
@@ -127,9 +67,10 @@ kernel.sched_wakeup_granularity_ns=1500000
 
 # 網絡吞吐與 BBR
 net.core.netdev_budget=1000
-net.core.netdev_budget_usecs=10000
+net.core.netdev_budget_usecs=5000
 
 # 內存管理 (防爆、防抖)
+vm.vfs_cache_pressure=40
 vm.min_free_kbytes=20480
 
 # TCP 窗口與緩衝區 (針對 4K 影音)
