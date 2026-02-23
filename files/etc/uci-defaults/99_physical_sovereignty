@@ -91,8 +91,4 @@ net.ipv4.tcp_wmem=4096 65536 16777216
 EOF
 sysctl -p
 
-# 9. 加載硬件引擎與 PPE
-modprobe crypto_safexcel 2>/dev/null
-echo 1 > /proc/sys/net/netfilter/nf_flow_table_hw 2>/dev/null
-
 exit 0
