@@ -17,17 +17,23 @@ if [ -b /dev/zram0 ]; then
     swapon -p 10 /dev/zram0
 fi
 
-# 3. GRO 物理层 - 消除中断风暴]
-# ---------------------------------------------------------
-# 遍历所有物理网口，强制开启卸载加速
-for eth in eth0 eth1 eth2 eth3; do
-    if ethtool -i $eth >/dev/null 2>&1; then
-        ethtool -K $eth gro on 2>/dev/null
-        ethtool -K $eth gso on 2>/dev/null
-        ethtool -K $eth tso on 2>/dev/null
-        logger "Sovereignty: $eth GRO/GSO/TSO enforced."
+# 3：GRO全链路物理层暴力合闸 - 最终版
+# 遍历所有活跃的物理与无线网口，消除中断风暴
+# 覆盖范围：有线(eth), 无线中继(apclix), 无线发射(ra/rax)
+for dev in eth0 eth1 apclix0 ra0 rax0; do
+    if [ -d "/sys/class/net/$dev" ]; then
+        # 强制开启大包封装，减少 CPU 换页开销
+        ethtool -K $dev gro on 2>/dev/null
+        ethtool -K $dev gso on 2>/dev/null
+        ethtool -K $dev tso on 2>/dev/null
+        # 对移动端友好的传输加速
+        ethtool -K $dev ufo on 2>/dev/null
+        logger "Physical_Sovereignty: $dev High-Speed Logic Aligned"
     fi
 done
+
+# 针对 Bridge 桥接接口的额外加固
+ethtool -K br-lan gro on 2>/dev/null
 
 # 4.强制所有 CPU 核心进入巅峰性能模式，杜绝任何节能延迟
 for i in 0 1 2 3; do
