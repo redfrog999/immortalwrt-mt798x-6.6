@@ -81,4 +81,17 @@ net.ipv4.tcp_wmem=4096 65536 16777216
 EOF
 sysctl -p
 
+# 8. 锁定无线中继背景扫描 (针对 apclix0)
+# simple:<阈值>:<长间隔>:<恢复时间>
+# 下面设置表示：当信号强度低于 -70dBm 时才扫描，正常间隔拉长到 600 秒
+uci set wireless.@wifi-iface[0].bgscan='simple:30:-70:600'
+
+# 3. 延长 Beacon 周期 (减少芯片心跳频率)
+# 针对 2.4G 和 5G 射频拉长信标间隔
+uci set wireless.default_radio0.beacon_int='200'
+uci set wireless.default_radio1.beacon_int='200'
+
+# 4. 提交并固化配置
+uci commit wireless
+
 exit 0
