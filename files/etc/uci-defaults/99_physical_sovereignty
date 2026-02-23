@@ -1,3 +1,5 @@
+不行的，吃不上水的，就算你改了rc.local，他的zram-swap目录不存在就吃不上水的。对吧。需要重新跑固件了。以下是我的uci-default文件代码，你帮我看看，怎么修改才能出现zram-swap目录，同时能开启就启动zstd，并且真的开始吃水吃到很深？
+
 #!/bin/sh
 # --- MT7981 物理主權 v9.0 (六合一模式·全量對齊版) ---
 
@@ -16,6 +18,48 @@ if [ -b /dev/zram0 ]; then
     mkswap /dev/zram0 >/dev/null
     swapon -p 10 /dev/zram0
 fi
+
+# 6. zRAM 強制 zstd 合闸
+# [关卡 1：物理主权加载 - 必须最先执行]
+modprobe zstd 2>/dev/null
+modprobe zram 2>/dev/null
+
+# [关卡 2：zRAM 強制 zstd 重構 - 內存物理增程]
+# ---------------------------------------------------------
+if [ -b /dev/zram0 ]; then
+    # 1. 先停掉旧的 Swap，清空逻辑
+    swapoff /dev/zram0 2>/dev/null
+    echo 1 > /sys/block/zram0/reset 2>/dev/null
+
+    # 2. 注入 ZSTD。如果失败（说明内核不支持），它会自动保留默认
+    echo zstd > /sys/block/zram0/comp_algorithm 2>/dev/null
+
+    # 3. 动态计算内存：设置为物理内存的 100% (ZSTD 压缩率高，不虚)
+    # TOTAL_MEM 是 KB，disksize 需要 Byte
+    TOTAL_MEM=$(free | grep Mem | awk '{print $2}')
+    echo $((TOTAL_MEM * 1024)) > /sys/block/zram0/disksize
+
+    # 4. 重新格式化并拉起，赋予高优先级
+    mkswap /dev/zram0 >/dev/null
+    swapon -p 10 /dev/zram0
+    logger "Sovereignty: zRAM has been weaponized with ZSTD."
+fi
+
+# 8. 系統級內核調優 (修正版)
+# 清理可能存在的舊配置，避免衝突
+sed -i '/vm.swappiness/d' /etc/sysctl.conf
+sed -i '/vm.vfs_cache_pressure/d' /etc/sysctl.conf
+
+cat >> /etc/sysctl.conf <<EOF
+# 強制開啟“吃水”模式
+vm.swappiness=100
+# 強制回收文件緩存，將空間騰給 ZSTD
+vm.vfs_cache_pressure=200
+# 髒數據回寫優化，配合 20MB/s+ 的 eMMC 寫入
+vm.dirty_ratio=40
+vm.dirty_background_ratio=10
+EOF
+sysctl -p
 
 # 3：GRO全链路物理层暴力合闸 - 最终版
 # 遍历所有活跃的物理与无线网口，消除中断风暴
@@ -83,10 +127,9 @@ kernel.sched_wakeup_granularity_ns=1500000
 
 # 網絡吞吐與 BBR
 net.core.netdev_budget=1000
-net.core.netdev_budget_usecs=5000
+net.core.netdev_budget_usecs=10000
 
 # 內存管理 (防爆、防抖)
-vm.vfs_cache_pressure=100
 vm.min_free_kbytes=20480
 
 # TCP 窗口與緩衝區 (針對 4K 影音)
