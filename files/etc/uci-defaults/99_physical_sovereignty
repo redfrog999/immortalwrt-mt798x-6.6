@@ -3,10 +3,19 @@
 #!/bin/sh
 # --- MT7981 物理主權 v9.0 (六合一模式·全量對齊版) ---
 
-# 1. 唤醒硬件加速基因
+# 0. 唤醒硬件加速基因
 modprobe crypto_safexcel 2>/dev/null
 # 开启硬件流表加速（必须开启，这是 MTK 的秘籍）
 echo 1 > /proc/sys/net/netfilter/nf_flow_table_hw 2>/dev/null
+
+# 1. 局部 GRO 合闸 - 算力精准投放
+# 仅针对有线开启 GRO，吃掉下载红利；严禁无线开启以降温
+ethtool -K eth0 gro on 2>/dev/null
+ethtool -K eth1 gro on 2>/dev/null
+ethtool -K apclix0 gro off 2>/dev/null
+ethtool -K ra0 gro off 2>/dev/null
+ethtool -K rax0 gro off 2>/dev/null
+ethtool -K br-lan gro off 2>/dev/null
 
 # 2. zRAM 強制 zstd 重構 (內存物理增程)
 if [ -b /dev/zram0 ]; then
@@ -66,11 +75,12 @@ kernel.sched_min_granularity_ns=1000000
 kernel.sched_wakeup_granularity_ns=1500000
 
 # 網絡吞吐與 BBR
-net.core.netdev_budget=1000
-net.core.netdev_budget_usecs=5000
+net.core.netdev_budget=600
+net.core.netdev_budget_usecs=4000
 
 # 內存管理 (防爆、防抖)
 vm.vfs_cache_pressure=40
+vm.swappiness=100
 vm.min_free_kbytes=20480
 
 # TCP 窗口與緩衝區 (針對 4K 影音)
@@ -78,20 +88,21 @@ net.core.rmem_max=16777216
 net.core.wmem_max=16777216
 net.ipv4.tcp_rmem=4096 87380 16777216
 net.ipv4.tcp_wmem=4096 65536 16777216
+
+# MT7531 网口减负 - 物理层整流]
+# 增加发送队列长度，防止硬件芯片在高负载下丢包导致发热
+ifconfig eth0 txqueuelen 2000
+ifconfig eth1 txqueuelen 2000
+
 EOF
 sysctl -p
 
-# 8. 锁定无线中继背景扫描 (针对 apclix0)
-# simple:<阈值>:<长间隔>:<恢复时间>
-# 下面设置表示：当信号强度低于 -70dBm 时才扫描，正常间隔拉长到 600 秒
-uci set wireless.@wifi-iface[0].bgscan='simple:30:-70:600'
+# 8. 无线射频降温 - 被动扫描逻辑]
+# 针对中继接口开启被动扫描（只听不发），并禁用主动背景扫描降温
+uci set wireless.@wifi-iface[0].passive_scan='1'
+uci set wireless.@wifi-iface[0].bgscan='none'
 
-# 延长 Beacon 周期 (减少芯片心跳频率)
-# 针对 2.4G 和 5G 射频拉长信标间隔
-uci set wireless.default_radio0.beacon_int='200'
-uci set wireless.default_radio1.beacon_int='200'
-
-# 提交并固化配置
+# 提交配置并重启无线
 uci commit wireless
 
 exit 0
