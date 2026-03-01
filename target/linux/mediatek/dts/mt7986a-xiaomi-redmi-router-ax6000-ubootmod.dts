@@ -4,32 +4,41 @@
 #include "mt7986a-xiaomi-redmi-router-ax6000.dtsi"
 
 / {
-	model = "Xiaomi Redmi Router AX6000 (OpenWrt U-Boot layout)";
-	compatible = "xiaomi,redmi-router-ax6000-ubootmod", "mediatek,mt7986a";
+    model = "Xiaomi Redmi Router AX6000 (OpenWrt U-Boot layout - 512M Mod)";
+    compatible = "xiaomi,redmi-router-ax6000-ubootmod", "mediatek,mt7986a";
 };
 
 &spi_nand_flash {
-        mediatek,nmbm;
-        mediatek,bmt-max-ratio = <1>;
-        mediatek,bmt-max-reserved-blocks = <64>;
+    /* * 针对 512MB NAND 开启 NMBM 坏块管理 
+     * 预留 64 个坏块对冲老化风险，确保 10 年服役期
+     */
+    mediatek,nmbm;
+    mediatek,bmt-max-ratio = <1>;
+    mediatek,bmt-max-reserved-blocks = <64>;
 };
 
 &partitions {
-	partition@580000 {
-                label = "crash";
-                reg = <0x580000 0x40000>;
-                read-only;
-        };
+    /* * 保留 crash 分区以兼容 U-Boot 逻辑 
+     */
+    partition@580000 {
+        label = "crash";
+        reg = <0x580000 0x40000>;
+        read-only;
+    };
 
-        partition@5c0000 {
-                label = "crash_log";
-                reg = <0x5c0000 0x40000>;
-                read-only;
-        };
+    partition@5c0000 {
+        label = "crash_log";
+        reg = <0x5c0000 0x40000>;
+        read-only;
+    };
 
-	partition@600000 {
-		label = "ubi";
-		reg = <0x600000 0x6e00000>;
-	};
-
+    /* * * [重型装甲：UBI 512M 全量释放] 
+     * 起始偏移：0x600000
+     * 计算公式：512MB (0x20000000) - 0x600000 = 0x1fa00000
+     * 实际可用空间约为 506MB，足以容纳你所有的内核备份和 Rootfs
+     */
+    partition@600000 {
+        label = "ubi";
+        reg = <0x600000 0x1fa00000>;
+    };
 };
