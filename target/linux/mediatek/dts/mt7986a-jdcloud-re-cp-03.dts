@@ -104,8 +104,8 @@
  * 百里散热压力比红米大，建议配合你的紫铜片改造
  */
 &cpu_opp_table {
-    opp-2200000000 {
-        opp-hz = /bits/ 64 <2200000000>;
+    opp-2250000000 {
+        opp-hz = /bits/ 64 <2250000000>;
         opp-microvolt = <1025000>; 
         clock-latency-ns = <20000>;
     };
