@@ -8,320 +8,301 @@
 #include "mt7986a.dtsi"
 
 / {
-    aliases {
-        serial0 = &uart0;
-        led-boot = &led_status_rgb;
-        led-failsafe = &led_status_rgb;
-        led-running = &led_status_rgb;
-        led-upgrade = &led_status_rgb;
-    };
+	aliases {
+		serial0 = &uart0;
+		led-boot = &led_status_rgb;
+		led-failsafe = &led_status_rgb;
+		led-running = &led_status_rgb;
+		led-upgrade = &led_status_rgb;
+	};
 
-    chosen: chosen {
-        stdout-path = "serial0:115200n8";
-    };
+	chosen: chosen {
+		stdout-path = "serial0:115200n8";
+	};
 
-    /* * [重型装甲 1]：2GB 三星 DDR4 物理寻址 
-     * 0x80000000 即 2048MB
-     */
-    memory {
-        reg = <0 0x40000000 0 0x80000000>;
-    };
+	/* [1. 2GB 内存物理寻址] - 闭源驱动必须识别这个 */
+	&memory {
+		reg = <0 0x40000000 0 0x80000000>;
+	};
 
-    /* * [重型装甲 2]：WED / Direct Data Path 专用影子内存 
-     * 物理隔离 128MB 确保无线中继在高压下不丢包
-     */
-    reserved-memory {
-        #address-cells = <2>;
-        #size-cells = <2>;
-        ranges;
+	/* [2. DDP/WED 影子内存隔离]
+	 * 闭源驱动虽然不认 wed0 标签，但内核 CMA 分配器认 reserved-memory。
+	 * 只要定义了这块 128MB 的区域，闭源驱动在加载 hnat/wifi 驱动时，
+	 * 如果配置了内核参数，它会自动去这里“割肉”。
+	 */
+	/ {
+		reserved-memory {
+			#address-cells = <2>;
+			#size-cells = <2>;
+			ranges;
 
-        wed_cma_resv: wed_cma@48000000 {
-            compatible = "shared-dma-pool";
-            reusable;
-            size = <0x00000000 0x08000000>; /* 128MB */
-            alloc-ranges = <0x00000000 0x40000000 0x00000000 0x80000000>;
-            linux,cma-default;
-        };
-    };
+			/* 专门划出 128MB 用于 DDP 和大流量缓冲 */
+			wed_cma_resv: wed_cma@48000000 {
+				compatible = "shared-dma-pool";
+				reusable;
+				size = <0x00000000 0x08000000>; /* 128MB */
+				alloc-ranges = <0x00000000 0x40000000 0x00000000 0x80000000>;
+				linux,cma-default;
+			};
+		};
+	};
 
-    keys {
-        compatible = "gpio-keys";
+	keys {
+		compatible = "gpio-keys";
 
-        reset {
-            label = "reset";
-            gpios = <&pio 9 GPIO_ACTIVE_LOW>;
-            linux,code = <KEY_RESTART>;
-        };
+		reset {
+			label = "reset";
+			gpios = <&pio 9 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RESTART>;
+		};
 
-        mesh {
-            label = "mesh";
-            gpios = <&pio 10 GPIO_ACTIVE_LOW>;
-            linux,code = <BTN_9>;
-            linux,input-type = <EV_SW>;
-        };
-    };
-};
-
-/* * [重型装甲 3]：2.2GHz 物理主频 OPP 表 
- * 配合你的紫铜片散热，这里将主频锁定在极限区间
- */
-&cpu_opp_table {
-    opp-2250000000 {
-        opp-hz = /bits/ 64 <2250000000>;
-        opp-microvolt = <1025000>; /* 联动加压至 1.025V 确保稳定性 */
-        clock-latency-ns = <20000>;
-    };
+		mesh {
+			label = "mesh";
+			gpios = <&pio 10 GPIO_ACTIVE_LOW>;
+			linux,code = <BTN_9>;
+			linux,input-type = <EV_SW>;
+		};
+	};
 };
 
 &crypto {
-    status = "okay";
-};
-
-/* 开启硬件加速引擎绑定 CMA */
-&wed0 {
-    memory-region = <&wed_cma_resv>;
-    status = "okay";
-};
-
-&wed1 {
-    status = "okay";
+	status = "okay";
 };
 
 &eth {
-    status = "okay";
+	status = "okay";
 
-    gmac0: mac@0 {
-        compatible = "mediatek,eth-mac";
-        reg = <0>;
-        phy-mode = "2500base-x";
+	gmac0: mac@0 {
+		compatible = "mediatek,eth-mac";
+		reg = <0>;
+		phy-mode = "2500base-x";
 
-        nvmem-cells = <&macaddr_factory_4 (-1)>;
-        nvmem-cell-names = "mac-address";
+		nvmem-cells = <&macaddr_factory_4 (-1)>;
+		nvmem-cell-names = "mac-address";
 
-        fixed-link {
-            speed = <2500>;
-            full-duplex;
-            pause;
-        };
-    };
+		fixed-link {
+			speed = <2500>;
+			full-duplex;
+			pause;
+		};
+	};
 
-    mdio: mdio-bus {
-        #address-cells = <1>;
-        #size-cells = <0>;
-    };
+	mdio: mdio-bus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+	};
 };
 
 &mdio {
-    switch: switch@1f {
-        compatible = "mediatek,mt7531";
-        reg = <31>;
-        reset-gpios = <&pio 5 GPIO_ACTIVE_HIGH>;
-        interrupt-controller;
-        #interrupt-cells = <1>;
-        interrupt-parent = <&pio>;
-        interrupts = <66 IRQ_TYPE_LEVEL_HIGH>;
-    };
+	switch: switch@1f {
+		compatible = "mediatek,mt7531";
+		reg = <31>;
+		reset-gpios = <&pio 5 GPIO_ACTIVE_HIGH>;
+		interrupt-controller;
+		#interrupt-cells = <1>;
+		interrupt-parent = <&pio>;
+		interrupts = <66 IRQ_TYPE_LEVEL_HIGH>;
+	};
 };
 
 &pio {
-    spi_flash_pins: spi-flash-pins-33-to-38 {
-        mux {
-            function = "spi";
-            groups = "spi0", "spi0_wp_hold";
-        };
-        conf-pu {
-            pins = "SPI2_CS", "SPI2_HOLD", "SPI2_WP";
-            drive-strength = <8>;
-            mediatek,pull-up-adv = <0>; /* bias-disable */
-        };
-        conf-pd {
-            pins = "SPI2_CLK", "SPI2_MOSI", "SPI2_MISO";
-            drive-strength = <8>;
-            mediatek,pull-down-adv = <0>; /* bias-disable */
-        };
-    };
+	spi_flash_pins: spi-flash-pins-33-to-38 {
+		mux {
+			function = "spi";
+			groups = "spi0", "spi0_wp_hold";
+		};
+		conf-pu {
+			pins = "SPI2_CS", "SPI2_HOLD", "SPI2_WP";
+			drive-strength = <8>;
+			mediatek,pull-up-adv = <0>; /* bias-disable */
+		};
+		conf-pd {
+			pins = "SPI2_CLK", "SPI2_MOSI", "SPI2_MISO";
+			drive-strength = <8>;
+			mediatek,pull-down-adv = <0>; /* bias-disable */
+		};
+	};
 
-    spi_led_pins: spic-pins-29-to-32 {
-        mux {
-            function = "spi";
-            groups = "spi1_2";
-        };
-    };
+	spi_led_pins: spic-pins-29-to-32 {
+		mux {
+			function = "spi";
+			groups = "spi1_2";
+		};
+	};
 
-    wf_2g_5g_pins: wf_2g_5g-pins {
-        mux {
-            function = "wifi";
-            groups = "wf_2g", "wf_5g";
-        };
-        conf {
-            pins = "WF0_HB1", "WF0_HB2", "WF0_HB3", "WF0_HB4",
-                   "WF0_HB0", "WF0_HB0_B", "WF0_HB5", "WF0_HB6",
-                   "WF0_HB7", "WF0_HB8", "WF0_HB9", "WF0_HB10",
-                   "WF0_TOP_CLK", "WF0_TOP_DATA", "WF1_HB1",
-                   "WF1_HB2", "WF1_HB3", "WF1_HB4", "WF1_HB0",
-                   "WF1_HB5", "WF1_HB6", "WF1_HB7", "WF1_HB8",
-                   "WF1_TOP_CLK", "WF1_TOP_DATA";
-            drive-strength = <4>;
-        };
-    };
+	wf_2g_5g_pins: wf_2g_5g-pins {
+		mux {
+			function = "wifi";
+			groups = "wf_2g", "wf_5g";
+		};
+		conf {
+			pins = "WF0_HB1", "WF0_HB2", "WF0_HB3", "WF0_HB4",
+			       "WF0_HB0", "WF0_HB0_B", "WF0_HB5", "WF0_HB6",
+			       "WF0_HB7", "WF0_HB8", "WF0_HB9", "WF0_HB10",
+			       "WF0_TOP_CLK", "WF0_TOP_DATA", "WF1_HB1",
+			       "WF1_HB2", "WF1_HB3", "WF1_HB4", "WF1_HB0",
+			       "WF1_HB5", "WF1_HB6", "WF1_HB7", "WF1_HB8",
+			       "WF1_TOP_CLK", "WF1_TOP_DATA";
+			drive-strength = <4>;
+		};
+	};
 };
 
 &spi0 {
-    pinctrl-names = "default";
-    pinctrl-0 = <&spi_flash_pins>;
-    status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi_flash_pins>;
+	status = "okay";
 
-    spi_nand_flash: flash@0 {
-        compatible = "spi-nand";
-        #address-cells = <1>;
-        #size-cells = <1>;
-        reg = <0>;
+	spi_nand_flash: flash@0 {
+		compatible = "spi-nand";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		reg = <0>;
 
-        spi-max-frequency = <52000000>; /* 提升 SPI 频率至 52MHz 对应 512M 高速 NAND */
-        spi-tx-bus-width = <4>;
-        spi-rx-bus-width = <4>;
+		spi-max-frequency = <20000000>;
+		spi-tx-bus-width = <4>;
+		spi-rx-bus-width = <4>;
 
-        partitions: partitions {
-            compatible = "fixed-partitions";
-            #address-cells = <1>;
-            #size-cells = <1>;
+		partitions: partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
 
-            partition@0 {
-                label = "BL2";
-                reg = <0x0 0x100000>;
-                read-only;
-            };
+			partition@0 {
+				label = "BL2";
+				reg = <0x0 0x100000>;
+				read-only;
+			};
 
-            partition@100000 {
-                label = "Nvram";
-                reg = <0x100000 0x40000>;
-            };
+			partition@100000 {
+				label = "Nvram";
+				reg = <0x100000 0x40000>;
+			};
 
-            partition@140000 {
-                label = "Bdata";
-                reg = <0x140000 0x40000>;
-            };
+			partition@140000 {
+				label = "Bdata";
+				reg = <0x140000 0x40000>;
+			};
 
-            factory: partition@180000 {
-                label = "Factory";
-                reg = <0x180000 0x200000>;
-                read-only;
+			factory: partition@180000 {
+				label = "Factory";
+				reg = <0x180000 0x200000>;
+				read-only;
 
-                nvmem-layout {
-                    compatible = "fixed-layout";
-                    #address-cells = <1>;
-                    #size-cells = <1>;
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
 
-                    macaddr_factory_4: macaddr@4 {
-                        compatible = "mac-base";
-                        reg = <0x4 0x6>;
-                        #nvmem-cell-cells = <1>;
-                    };
-                };
-            };
+					macaddr_factory_4: macaddr@4 {
+						compatible = "mac-base";
+						reg = <0x4 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+				};
+			};
 
-            partition@380000 {
-                label = "FIP";
-                reg = <0x380000 0x200000>;
-                read-only;
-            };
-
-            /* * [重型装甲 4]：512MB NAND 主权释放 
-             * UBI 分区占据剩余所有空间 (约 506MB)
-             */
-            partition@580000 {
-                label = "ubi";
-                reg = <0x580000 0x1fa80000>;
-            };
-        };
-    };
+			partition@380000 {
+				label = "FIP";
+				reg = <0x380000 0x200000>;
+				read-only;
+			};
+		};
+	};
 };
 
 &spi1 {
-    pinctrl-names = "default";
-    pinctrl-0 = <&spi_led_pins>;
-    status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi_led_pins>;
+	status = "okay";
 
-    ws2812b@0 {
-        #address-cells = <1>;
-        #size-cells = <0>;
-        compatible = "worldsemi,ws2812b";
-        reg = <0>;
-        spi-max-frequency = <3000000>;
+	ws2812b@0 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		compatible = "worldsemi,ws2812b";
+		reg = <0>;
+		spi-max-frequency = <3000000>;
 
-        led_status_rgb: led@0 {
-            reg = <0>;
-            function = LED_FUNCTION_STATUS;
-            color = <LED_COLOR_ID_RGB>;
-            color-index = <LED_COLOR_ID_RED LED_COLOR_ID_GREEN LED_COLOR_ID_BLUE>;
-            color-intensity = <0 255 0>;
-        };
+		led_status_rgb: led@0 {
+			reg = <0>;
+			function = LED_FUNCTION_STATUS;
+			color = <LED_COLOR_ID_RGB>;
+			color-index = <LED_COLOR_ID_RED LED_COLOR_ID_GREEN LED_COLOR_ID_BLUE>;
+			color-intensity = <0 255 0>; /* GREEN */
+		};
 
-        led_network_rgb: led@1 {
-            reg = <1>;
-            function = "network";
-            color = <LED_COLOR_ID_RGB>;
-            color-index = <LED_COLOR_ID_RED LED_COLOR_ID_GREEN LED_COLOR_ID_BLUE>;
-            color-intensity = <0 0 255>;
-        };
-    };
+		led_network_rgb: led@1 {
+			reg = <1>;
+
+			/* Hardcoding here for backward compatibility */
+			function = "network";
+
+			color = <LED_COLOR_ID_RGB>;
+			color-index = <LED_COLOR_ID_RED LED_COLOR_ID_GREEN LED_COLOR_ID_BLUE>;
+			color-intensity = <0 0 255>; /* BLUE */
+		};
+	};
 };
 
 &switch {
-    ports {
-        #address-cells = <1>;
-        #size-cells = <0>;
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-        port@1 {
-            reg = <1>;
-            label = "lan4";
-        };
+		port@1 {
+			reg = <1>;
+			label = "lan4";
+		};
 
-        port@2 {
-            reg = <2>;
-            label = "lan3";
-        };
+		port@2 {
+			reg = <2>;
+			label = "lan3";
+		};
 
-        port@3 {
-            reg = <3>;
-            label = "lan2";
-        };
+		port@3 {
+			reg = <3>;
+			label = "lan2";
+		};
 
-        port@4 {
-            reg = <4>;
-            label = "wan";
-        };
+		port@4 {
+			reg = <4>;
+			label = "wan";
+		};
 
-        port@6 {
-            reg = <6>;
-            ethernet = <&gmac0>;
-            phy-mode = "2500base-x";
+		port@6 {
+			reg = <6>;
+			ethernet = <&gmac0>;
+			phy-mode = "2500base-x";
 
-            fixed-link {
-                speed = <2500>;
-                full-duplex;
-                pause;
-            };
-        };
-    };
+			fixed-link {
+				speed = <2500>;
+				full-duplex;
+				pause;
+			};
+		};
+	};
 };
 
 &trng {
-    status = "okay";
+	status = "okay";
 };
 
 &uart0 {
-    status = "okay";
+	status = "okay";
 };
 
 &watchdog {
-    status = "okay";
+	status = "okay";
 };
 
 &wifi {
-    status = "okay";
-    pinctrl-names = "default";
-    pinctrl-0 = <&wf_2g_5g_pins>;
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&wf_2g_5g_pins>;
 
-    mediatek,mtd-eeprom = <&factory 0x0>;
+	mediatek,mtd-eeprom = <&factory 0x0>;
+};
+
+&uart0 {
+	status = "okay";
 };
