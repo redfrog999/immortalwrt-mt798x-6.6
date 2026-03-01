@@ -2221,7 +2221,7 @@ define Device/xiaomi_redmi-router-ax6000-ubootmod
   DEVICE_DTS_DIR := ../dts
   DEVICE_PACKAGES := kmod-leds-ws2812b kmod-mt7915e kmod-mt7986-firmware mt7986-wo-firmware
   KERNEL_INITRAMFS_SUFFIX := -recovery.itb
-  UBINIZE_OPTS := -E 5
+  UBINIZE_OPTS := -E 64
   BLOCKSIZE := 128k
   PAGESIZE := 2048
   ARTIFACTS := initramfs-factory.ubi
