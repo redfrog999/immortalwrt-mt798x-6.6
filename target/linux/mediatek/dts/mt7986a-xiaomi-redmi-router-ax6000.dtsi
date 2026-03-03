@@ -20,31 +20,8 @@
 		stdout-path = "serial0:115200n8";
 	};
 
-	/* [1. 2GB 内存物理寻址] - 闭源驱动必须识别这个 */
-	&memory {
-		reg = <0 0x40000000 0 0x80000000>;
-	};
-
-	/* [2. DDP/WED 影子内存隔离]
-	 * 闭源驱动虽然不认 wed0 标签，但内核 CMA 分配器认 reserved-memory。
-	 * 只要定义了这块 128MB 的区域，闭源驱动在加载 hnat/wifi 驱动时，
-	 * 如果配置了内核参数，它会自动去这里“割肉”。
-	 */
-	/ {
-		reserved-memory {
-			#address-cells = <2>;
-			#size-cells = <2>;
-			ranges;
-
-			/* 专门划出 128MB 用于 DDP 和大流量缓冲 */
-			wed_cma_resv: wed_cma@48000000 {
-				compatible = "shared-dma-pool";
-				reusable;
-				size = <0x00000000 0x08000000>; /* 128MB */
-				alloc-ranges = <0x00000000 0x40000000 0x00000000 0x80000000>;
-				linux,cma-default;
-			};
-		};
+	memory {
+		reg = <0 0x40000000 0 0x20000000>;
 	};
 
 	keys {
