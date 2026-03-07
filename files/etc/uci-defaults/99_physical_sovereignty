@@ -100,7 +100,6 @@ sysctl -p
 # 8. 无线射频降温 - 被动扫描逻辑]
 # 针对中继接口开启被动扫描（只听不发），并禁用主动背景扫描降温
 uci set wireless.@wifi-iface[0].passive_scan='1'
-uci set wireless.@wifi-iface[0].bgscan='none'
 
 # 提交配置并重启无线
 uci commit wireless
