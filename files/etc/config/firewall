@@ -1,0 +1,10 @@
+config defaults
+    option input 'ACCEPT'
+    option output 'ACCEPT'
+    option forward 'REJECT'
+    option syn_flood '1'
+    option fullcone '1'
+    # 核心：徹底關閉所有 Offload，回歸物理核心調度
+    option flow_offloading '0'
+    option flow_offloading_hw '0'
+    option nftables_priority '0'
